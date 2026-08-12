@@ -1,0 +1,604 @@
+#!/usr/bin/env python3
+"""Generate all numerical data and publication figures for the package."""
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import mpmath as mp
+import numpy as np
+import pandas as pd
+
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from tn_floquet import (  # noqa: E402
+    build_dense_matrix,
+    cauchon_eigenvalues,
+    dense_eigenvalues,
+    dimensional_decay_table,
+    dimensional_protocol_table,
+    factor_table,
+    high_precision_dense_eigenvalues_mp,
+    make_graded_parameters,
+    make_microreactor_protocol,
+    pulse_schedule,
+    rescale_upper,
+    tntool_bd_matrix,
+    tntool_expand_bd,
+    validate_against_dense,
+)
+
+DATA = ROOT / "data"
+FIGURES = ROOT / "figures"
+RESULTS = ROOT / "results"
+for directory in (DATA, FIGURES, RESULTS):
+    directory.mkdir(parents=True, exist_ok=True)
+
+mpl.rcParams.update(
+    {
+        "font.family": "serif",
+        "mathtext.fontset": "stix",
+        "font.size": 9.5,
+        "axes.labelsize": 10,
+        "axes.titlesize": 10.5,
+        "legend.fontsize": 8.5,
+        "xtick.labelsize": 8.5,
+        "ytick.labelsize": 8.5,
+        "axes.linewidth": 0.8,
+        "lines.linewidth": 1.35,
+        "lines.markersize": 4.5,
+        "savefig.bbox": "tight",
+        "savefig.pad_inches": 0.04,
+    }
+)
+
+
+def save_figure(fig: plt.Figure, stem: str) -> None:
+    fig.savefig(FIGURES / f"{stem}.pdf")
+    fig.savefig(FIGURES / f"{stem}.png", dpi=600)
+    plt.close(fig)
+
+
+def relative_errors_against_mp(values: np.ndarray, reference_mp: list[mp.mpf]) -> np.ndarray:
+    """Evaluate relative errors before rounding the multiprecision reference."""
+    errors = []
+    for value, reference in zip(values, reference_mp):
+        value_mp = mp.mpc(str(value.real), str(value.imag)) if np.iscomplexobj(values) else mp.mpf(str(value))
+        errors.append(float(abs(value_mp - reference) / abs(reference)))
+    return np.asarray(errors, dtype=float)
+
+
+def figure_1_protocol_and_matrix() -> None:
+    schedule_params = make_graded_parameters(
+        n=7,
+        retention_span_decades=6,
+        coupling_strength=0.10,
+        asymmetry=1.4,
+        target_rho=0.78,
+    )
+    schedule_df = pd.DataFrame(pulse_schedule(schedule_params))
+    schedule_df.to_csv(DATA / "figure_1a_pulse_schedule.csv", index=False)
+
+    matrix_params = make_graded_parameters(
+        n=16,
+        retention_span_decades=12,
+        coupling_strength=0.08,
+        asymmetry=1.5,
+        target_rho=0.85,
+    )
+    matrix = build_dense_matrix(matrix_params)
+    matrix_records = []
+    for i in range(matrix.shape[0]):
+        for j in range(matrix.shape[1]):
+            value = matrix[i, j]
+            matrix_records.append(
+                {
+                    "row": i + 1,
+                    "column": j + 1,
+                    "value": value,
+                    "log10_absolute_value": np.log10(abs(value)) if value != 0 else -np.inf,
+                }
+            )
+    pd.DataFrame(matrix_records).to_csv(DATA / "figure_1b_monodromy_matrix.csv", index=False)
+
+    fig = plt.figure(figsize=(7.15, 6.0), constrained_layout=True)
+    grid = fig.add_gridspec(2, 1, height_ratios=[1.0, 1.18])
+    ax1 = fig.add_subplot(grid[0, 0])
+    lower = schedule_df[schedule_df["direction"] == "lower"]
+    upper = schedule_df[schedule_df["direction"] == "upper"]
+    decay_step = int(schedule_df.loc[schedule_df["direction"] == "decay", "step"].iloc[0])
+    ax1.scatter(lower["step"], lower["active_link"], marker=">", label="downstream pulse")
+    ax1.scatter(upper["step"], upper["active_link"], marker="<", label="upstream pulse")
+    ax1.axvline(decay_step, linestyle="--", linewidth=1.0, label="diagonal decay dwell")
+    ax1.set_xlabel("Substep within one forcing period")
+    ax1.set_ylabel("Active nearest-neighbour link")
+    ax1.set_yticks(range(1, schedule_params.n))
+    ax1.set_title("(a)", loc="left")
+    ax1.grid(True, alpha=0.25)
+    ax1.legend(ncol=3, loc="upper center", bbox_to_anchor=(0.5, -0.22), frameon=False)
+
+    ax2 = fig.add_subplot(grid[1, 0])
+    image = ax2.imshow(np.log10(np.abs(matrix)), origin="lower", aspect="auto")
+    colorbar = fig.colorbar(image, ax=ax2, pad=0.02)
+    colorbar.set_label(r"$\log_{10}|M_{ij}|$")
+    ax2.set_xlabel("Column index")
+    ax2.set_ylabel("Row index")
+    ax2.set_title("(b)", loc="left")
+    save_figure(fig, "figure_1_protocol_and_matrix")
+
+    pd.DataFrame(factor_table(matrix_params)).to_csv(DATA / "baseline_factor_parameters.csv", index=False)
+
+
+def figure_2_spectrum_accuracy() -> dict:
+    params = make_graded_parameters(
+        n=24,
+        retention_span_decades=40,
+        coupling_strength=0.08,
+        asymmetry=1.5,
+        target_rho=0.85,
+    )
+    structured = cauchon_eigenvalues(params)
+    reference_mp = high_precision_dense_eigenvalues_mp(params, decimal_digits=110)
+    reference = np.asarray([float(value) for value in reference_mp], dtype=float)
+    dense = dense_eigenvalues(params)
+    dense_real = dense.real
+    relative_structured = relative_errors_against_mp(structured, reference_mp)
+    relative_dense = relative_errors_against_mp(dense, reference_mp)
+    modes = np.arange(1, params.n + 1)
+
+    tntool_path = RESULTS / "koev_tntool_comparison.csv"
+    if tntool_path.exists():
+        tntool_frame = pd.read_csv(tntool_path)
+        if len(tntool_frame) != params.n:
+            raise ValueError("TNTool comparison row count does not match benchmark size")
+        tntool_values = tntool_frame["koev_tntool"].astype(float).to_numpy()
+        relative_tntool = tntool_frame["relative_error"].astype(float).to_numpy()
+    else:
+        tntool_values = np.full(params.n, np.nan)
+        relative_tntool = np.full(params.n, np.nan)
+
+    frame = pd.DataFrame(
+        {
+            "mode": modes,
+            "high_precision_reference": reference,
+            "high_precision_reference_decimal": [mp.nstr(value, 34) for value in reference_mp],
+            "structured_cauchon_dlasq1": structured,
+            "koev_tntool": tntool_values,
+            "dense_eig_real_part": dense_real,
+            "dense_eig_imaginary_part": dense.imag,
+            "dense_eig_absolute_value": np.abs(dense),
+            "dense_eig_sign": np.sign(dense_real).astype(int),
+            "relative_error_structured": relative_structured,
+            "relative_error_tntool": relative_tntool,
+            "relative_error_dense": relative_dense,
+        }
+    )
+    frame.to_csv(DATA / "figure_2_spectrum_accuracy.csv", index=False)
+
+    fig, axes = plt.subplots(2, 1, figsize=(7.15, 6.2), sharex=True, constrained_layout=True)
+    ax = axes[0]
+    ax.semilogy(modes, reference, "-", label="independent 110-digit dense reference")
+    ax.semilogy(modes, structured, "o", fillstyle="none", label="Cauchon + DLASQ1")
+    if np.all(np.isfinite(tntool_values)):
+        ax.semilogy(modes, tntool_values, "^", fillstyle="none", label="Koev TNTool")
+    positive = dense_real > 0
+    negative = dense_real < 0
+    ax.semilogy(modes[positive], dense_real[positive], "x", label="dense eig (positive)")
+    if np.any(negative):
+        ax.semilogy(
+            modes[negative],
+            np.abs(dense_real[negative]),
+            "s",
+            fillstyle="none",
+            label="dense eig (negative; magnitude shown)",
+        )
+    ax.set_ylabel("Floquet multiplier")
+    ax.set_title("(a)", loc="left")
+    ax.grid(True, which="both", alpha=0.25)
+    ax.legend(frameon=False)
+
+    ax = axes[1]
+    floor = 1e-18
+    ax.semilogy(modes, np.maximum(relative_structured, floor), "o-", label="Cauchon + DLASQ1")
+    if np.all(np.isfinite(relative_tntool)):
+        ax.semilogy(modes, np.maximum(relative_tntool, floor), "^-", label="Koev TNTool")
+    ax.semilogy(modes, np.maximum(relative_dense, floor), "x-", label="dense eig")
+    ax.axhline(np.finfo(float).eps, linestyle="--", linewidth=1.0, label="machine epsilon")
+    ax.set_xlabel("Mode number, ordered from slowest to fastest")
+    ax.set_ylabel("Relative error")
+    ax.set_title("(b)", loc="left")
+    ax.grid(True, which="both", alpha=0.25)
+    ax.legend(frameon=False)
+    save_figure(fig, "figure_2_spectrum_accuracy")
+
+    # Export the same factor data in Koev TNTool BD(A) format. TNTool itself
+    # is an external dependency; an independent external execution consumes
+    # this file and produces the comparable eigenvalue table.
+    bd = tntool_bd_matrix(params)
+    np.savetxt(DATA / "koev_tntool_bd_benchmark.csv", bd, delimiter=",", fmt="%.17e")
+    bd_reconstruction_relative_error = float(
+        np.linalg.norm(tntool_expand_bd(bd) - build_dense_matrix(params))
+        / np.linalg.norm(build_dense_matrix(params))
+    )
+    pd.DataFrame(
+        {
+            "mode": modes,
+            "independent_reference": reference,
+            "independent_reference_decimal": [mp.nstr(value, 34) for value in reference_mp],
+        }
+    ).to_csv(DATA / "koev_tntool_reference.csv", index=False)
+    tntool_result_path = RESULTS / "koev_tntool_comparison.csv"
+    if tntool_result_path.exists():
+        tntool_result = pd.read_csv(tntool_result_path)
+        tntool_max_relative_error = float(tntool_result["relative_error"].astype(float).max())
+        tntool_basis = "measured with official TNEigenValues against the independent decimal reference"
+    else:
+        tntool_max_relative_error = float("nan")
+        tntool_basis = "published HRA method; external execution result not present"
+
+    comparison = pd.DataFrame(
+        [
+            {
+                "method": "Cauchon reduction + LAPACK DLASQ1",
+                "input": "canonical bidiagonal factors",
+                "executed_in_python_package": True,
+                "max_relative_error": float(np.max(relative_structured)),
+                "negative_eigenvalues": 0,
+                "leading_cubic_coefficient": 10.0 / 3.0,
+                "comparison_basis": "measured against 110-digit independent reference",
+            },
+            {
+                "method": "Koev TNEigenValues (TNTool)",
+                "input": "same exported BD(A) matrix",
+                "executed_in_python_package": False,
+                "max_relative_error": tntool_max_relative_error,
+                "negative_eigenvalues": 0 if np.isfinite(tntool_max_relative_error) else np.nan,
+                "leading_cubic_coefficient": 16.0 / 3.0,
+                "comparison_basis": tntool_basis,
+            },
+            {
+                "method": "NumPy dense eig",
+                "input": "formed dense monodromy matrix",
+                "executed_in_python_package": True,
+                "max_relative_error": float(np.max(relative_dense)),
+                "negative_eigenvalues": int(np.sum(dense_real < 0)),
+                "leading_cubic_coefficient": np.nan,
+                "comparison_basis": "measured against 110-digit independent reference",
+            },
+        ]
+    )
+    comparison.to_csv(DATA / "algorithm_comparison.csv", index=False)
+
+    return {
+        "n": params.n,
+        "retention_span_decades": params.retention_span_decades,
+        "spectral_radius": float(structured[0]),
+        "smallest_multiplier": float(structured[-1]),
+        "spectral_dynamic_range": float(structured[0] / structured[-1]),
+        "max_relative_error_structured": float(np.max(relative_structured)),
+        "max_relative_error_tntool": tntool_max_relative_error,
+        "tntool_bd_reconstruction_relative_error": bd_reconstruction_relative_error,
+        "max_relative_error_dense": float(np.max(relative_dense)),
+        "negative_dense_eigenvalues": int(np.sum(dense_real < 0)),
+    }
+
+
+def figure_3_error_vs_dynamic_range() -> pd.DataFrame:
+    records = []
+    spans = np.arange(4.0, 45.0, 4.0)
+    for span in spans:
+        params = make_graded_parameters(
+            n=24,
+            retention_span_decades=float(span),
+            coupling_strength=0.08,
+            asymmetry=1.5,
+            target_rho=0.85,
+        )
+        reference_mp = high_precision_dense_eigenvalues_mp(params, decimal_digits=105)
+        reference = np.asarray([float(value) for value in reference_mp], dtype=float)
+        structured = cauchon_eigenvalues(params)
+        dense = dense_eigenvalues(params)
+        dense_real = dense.real
+        structured_error = relative_errors_against_mp(structured, reference_mp)
+        dense_error = relative_errors_against_mp(dense, reference_mp)
+        records.append(
+            {
+                "retention_span_decades": span,
+                "spectral_dynamic_range_decades": np.log10(reference[0] / reference[-1]),
+                "max_relative_error_structured": np.max(structured_error),
+                "max_relative_error_dense": np.max(dense_error),
+                "resolved_modes_structured_relerr_lt_1e-8": np.sum(structured_error < 1e-8),
+                "resolved_modes_dense_relerr_lt_1e-8": np.sum(dense_error < 1e-8),
+                "negative_dense_eigenvalues": np.sum(dense_real < 0),
+            }
+        )
+    frame = pd.DataFrame(records)
+    frame.to_csv(DATA / "figure_3_error_vs_dynamic_range.csv", index=False)
+
+    fig, axes = plt.subplots(1, 2, figsize=(7.15, 3.25), constrained_layout=True)
+    ax = axes[0]
+    ax.semilogy(
+        frame["spectral_dynamic_range_decades"],
+        np.maximum(frame["max_relative_error_structured"], 1e-18),
+        "o-",
+        label="Cauchon + DLASQ1",
+    )
+    ax.semilogy(
+        frame["spectral_dynamic_range_decades"],
+        np.maximum(frame["max_relative_error_dense"], 1e-18),
+        "s-",
+        label="dense eig",
+    )
+    ax.axhline(np.finfo(float).eps, linestyle="--", linewidth=1.0)
+    ax.set_xlabel("Spectral dynamic range (decades)")
+    ax.set_ylabel("Maximum relative error")
+    ax.set_title("(a)", loc="left")
+    ax.grid(True, which="both", alpha=0.25)
+    ax.legend(frameon=False)
+
+    ax = axes[1]
+    ax.plot(
+        frame["spectral_dynamic_range_decades"],
+        frame["resolved_modes_structured_relerr_lt_1e-8"],
+        "o-",
+        label="Cauchon + DLASQ1",
+    )
+    ax.plot(
+        frame["spectral_dynamic_range_decades"],
+        frame["resolved_modes_dense_relerr_lt_1e-8"],
+        "s-",
+        label="dense eig",
+    )
+    ax.set_xlabel("Spectral dynamic range (decades)")
+    ax.set_ylabel("Modes resolved to relative error $<10^{-8}$")
+    ax.set_ylim(-0.5, 24.5)
+    ax.set_title("(b)", loc="left")
+    ax.grid(True, alpha=0.25)
+    ax.legend(frameon=False)
+    save_figure(fig, "figure_3_error_vs_dynamic_range")
+    return frame
+
+
+def figure_4_nonreciprocity_scan() -> pd.DataFrame:
+    base = make_graded_parameters(
+        n=16,
+        retention_span_decades=8,
+        coupling_strength=0.20,
+        asymmetry=1.0,
+        target_rho=0.35,
+    )
+    ratios = np.geomspace(0.1, 6.0, 41)
+    records = []
+    for ratio in ratios:
+        params = rescale_upper(base, float(ratio))
+        values = cauchon_eigenvalues(params)
+        row = {
+            "upper_to_baseline_coupling_ratio": ratio,
+            "spectral_radius": values[0],
+            "stable": values[0] < 1.0,
+        }
+        for j in range(4):
+            row[f"lambda_{j + 1}"] = values[j]
+            row[f"relaxation_cycles_{j + 1}"] = (
+                -1.0 / np.log(values[j]) if 0.0 < values[j] < 1.0 else np.nan
+            )
+        records.append(row)
+    frame = pd.DataFrame(records)
+    frame.to_csv(DATA / "figure_4_nonreciprocity_scan.csv", index=False)
+
+    fig, ax = plt.subplots(figsize=(7.15, 4.2), constrained_layout=True)
+    for j, marker in enumerate(("o", "s", "^", "d"), start=1):
+        ax.semilogx(
+            frame["upper_to_baseline_coupling_ratio"],
+            frame[f"lambda_{j}"],
+            marker=marker,
+            markevery=4,
+            label=rf"$\lambda_{j}$",
+        )
+    ax.axhline(1.0, linestyle="--", linewidth=1.0, label="stability boundary")
+    ax.set_xlabel("Reverse-sweep coupling multiplier")
+    ax.set_ylabel("Floquet multiplier")
+    ax.grid(True, which="both", alpha=0.25)
+    ax.legend(ncol=3, frameon=False)
+    save_figure(fig, "figure_4_nonreciprocity_scan")
+    return frame
+
+
+def figure_5_modal_decay() -> pd.DataFrame:
+    params = make_graded_parameters(
+        n=24,
+        retention_span_decades=12,
+        coupling_strength=0.08,
+        asymmetry=1.5,
+        target_rho=0.85,
+    )
+    values = cauchon_eigenvalues(params)
+    selected_modes = [1, 2, 4, 8, 16, 24]
+    cycles = np.arange(0, 41)
+    frame = pd.DataFrame({"cycle": cycles})
+    for mode in selected_modes:
+        frame[f"mode_{mode}_lambda"] = values[mode - 1]
+        frame[f"mode_{mode}_amplitude"] = values[mode - 1] ** cycles
+    frame.to_csv(DATA / "figure_5_modal_decay.csv", index=False)
+
+    # Keep the legend outside the data axes so it cannot obscure the decay
+    # curves.  Arrange the six entries as three columns by two rows below the
+    # plot and, in the manuscript, immediately above the LaTeX figure caption.
+    fig, ax = plt.subplots(figsize=(7.15, 5.25))
+    line_styles = ("-", "--", "-.", ":", "-", "--")
+    for mode, marker, line_style in zip(
+        selected_modes, ("o", "s", "^", "d", "v", "x"), line_styles
+    ):
+        amplitude = np.maximum(frame[f"mode_{mode}_amplitude"].to_numpy(), 1e-300)
+        ax.semilogy(
+            cycles,
+            amplitude,
+            linestyle=line_style,
+            marker=marker,
+            markerfacecolor="none" if marker != "x" else None,
+            markevery=5,
+            label=rf"mode {mode}: $\lambda={values[mode - 1]:.2e}$",
+        )
+    ax.set_xlabel("Number of forcing periods")
+    ax.set_ylabel("Normalized modal amplitude $|a_j(k)|/|a_j(0)|$")
+    ax.grid(True, which="both", alpha=0.25)
+    handles, labels = ax.get_legend_handles_labels()
+    fig.legend(
+        handles,
+        labels,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.018),
+        ncol=3,
+        frameon=False,
+        fontsize=8.0,
+        handlelength=2.4,
+        columnspacing=1.25,
+        handletextpad=0.55,
+    )
+    fig.subplots_adjust(left=0.13, right=0.98, top=0.985, bottom=0.235)
+    save_figure(fig, "figure_5_modal_decay")
+    return frame
+
+
+def figure_6_dimensional_microreactor() -> dict:
+    """Illustrative dimensional realization with units and valve timing."""
+    protocol = make_microreactor_protocol()
+    pulse_df = pd.DataFrame(dimensional_protocol_table(protocol))
+    decay_df = pd.DataFrame(dimensional_decay_table(protocol))
+    pulse_df.to_csv(DATA / "figure_6a_dimensional_pulses.csv", index=False)
+    decay_df.to_csv(DATA / "figure_6b_dimensional_decay.csv", index=False)
+
+    summary = pd.DataFrame(
+        [
+            {
+                "realization": protocol.nominal_cycle_label,
+                "compartments": protocol.parameters.n,
+                "chamber_volume_uL": protocol.chamber_volume_uL,
+                "pulse_duration_ms": 1000.0 * protocol.pulse_duration_s,
+                "decay_dwell_s": protocol.decay_dwell_s,
+                "cycle_duration_s": protocol.cycle_duration_s,
+                "minimum_coupling_rate_per_s": pulse_df[
+                    "effective_source_clamped_rate_per_s"
+                ].min(),
+                "maximum_coupling_rate_per_s": pulse_df[
+                    "effective_source_clamped_rate_per_s"
+                ].max(),
+                "minimum_decay_rate_per_s": decay_df["decay_rate_per_s"].min(),
+                "maximum_decay_rate_per_s": decay_df["decay_rate_per_s"].max(),
+                "spectral_radius": cauchon_eigenvalues(protocol.parameters)[0],
+            }
+        ]
+    )
+    summary.to_csv(DATA / "physical_protocol_summary.csv", index=False)
+
+    fig, axes = plt.subplots(2, 1, figsize=(7.15, 6.0), constrained_layout=True)
+    ax = axes[0]
+    for direction, marker, label in (
+        ("lower", ">", "downstream production pulse"),
+        ("upper", "<", "upstream feedback pulse"),
+    ):
+        selected = pulse_df[pulse_df["direction"] == direction]
+        ax.plot(
+            selected["step"],
+            selected["effective_source_clamped_rate_per_s"],
+            linestyle="none",
+            marker=marker,
+            label=label,
+        )
+    ax.set_xlabel("Chronological valve-open pulse")
+    ax.set_ylabel(r"Effective coupling rate (s$^{-1}$)")
+    ax.set_title("(a)", loc="left")
+    ax.grid(True, alpha=0.25)
+    ax.legend(frameon=False)
+
+    ax = axes[1]
+    ax.plot(
+        decay_df["compartment"],
+        decay_df["decay_rate_per_s"],
+        "o-",
+        label=r"decay rate $\gamma_i$",
+    )
+    ax.set_xlabel("Compartment")
+    ax.set_ylabel(r"Dwell decay rate (s$^{-1}$)")
+    ax.set_title("(b)", loc="left")
+    ax.grid(True, alpha=0.25)
+    ax.legend(frameon=False)
+    save_figure(fig, "figure_6_dimensional_microreactor")
+
+    return {key: float(value) if isinstance(value, (np.floating, float)) else value
+            for key, value in summary.iloc[0].to_dict().items()}
+
+
+def main() -> None:
+    figure_1_protocol_and_matrix()
+    spectrum_summary = figure_2_spectrum_accuracy()
+    error_frame = figure_3_error_vs_dynamic_range()
+    asymmetry_frame = figure_4_nonreciprocity_scan()
+    figure_5_modal_decay()
+    physical_summary = figure_6_dimensional_microreactor()
+
+    # Generate the 120-decimal-digit reference eigensystem, sign-variation
+    # diagnostics, dense-vector comparison, and Figure 7.
+    subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "compute_eigenvectors_sign_variation.py")],
+        cwd=ROOT,
+        check=True,
+    )
+    eigenvector_summary = json.loads((RESULTS / "eigenvector_summary.json").read_text(encoding="utf-8"))
+
+    moderate = make_graded_parameters(
+        n=12,
+        retention_span_decades=8,
+        coupling_strength=0.08,
+        asymmetry=1.5,
+        target_rho=0.85,
+    )
+    validation = validate_against_dense(moderate)
+
+    stability_crossing = asymmetry_frame.loc[
+        asymmetry_frame["spectral_radius"] >= 1.0,
+        "upper_to_baseline_coupling_ratio",
+    ]
+    summary = {
+        "reference_method": "independent multiprecision dense monodromy eigensolve",
+        "spectrum_benchmark": spectrum_summary,
+        "moderate_problem_validation": validation,
+        "dimensional_microreactor_protocol": physical_summary,
+        "high_precision_eigenvectors_and_sign_variation": eigenvector_summary,
+        "koev_tntool_interoperability": {
+            "bd_input_csv": "data/koev_tntool_bd_benchmark.csv",
+            "reference_csv": "data/koev_tntool_reference.csv",
+            "measured_comparison_csv": "results/koev_tntool_comparison.csv",
+            "runner": "external TNTool execution; runner not redistributed",
+            "official_source_page_verified": "2026-08-11",
+            "official_tntool_zip_sha256": "be339dc32a9ef3bed691c60fe766f69d990f3e758002793bf0a2f50c31a73ea8",
+            "benchmark_bd_sha256": "cb046e3d10840b09a6b505977b57b83cbd2c70643f97854f2bdafa4020a8ed78",
+            "measured_external_execution": True,
+            "executed_in_this_python_environment": False,
+            "max_relative_error": spectrum_summary.get("max_relative_error_tntool"),
+            "bd_reconstruction_relative_error": spectrum_summary.get("tntool_bd_reconstruction_relative_error"),
+        },
+        "maximum_dynamic_range_decades_tested": float(
+            error_frame["spectral_dynamic_range_decades"].max()
+        ),
+        "first_sampled_nonreciprocity_ratio_with_rho_ge_1": (
+            float(stability_crossing.iloc[0]) if not stability_crossing.empty else None
+        ),
+        "figure_files": sorted(path.name for path in FIGURES.glob("*.pdf")),
+        "csv_files": sorted(str(path.relative_to(DATA)) for path in DATA.rglob("*.csv")),
+    }
+    (RESULTS / "numerical_summary.json").write_text(
+        json.dumps(summary, indent=2), encoding="utf-8"
+    )
+    print(json.dumps(summary, indent=2))
+
+
+if __name__ == "__main__":
+    main()
