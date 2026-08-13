@@ -1,0 +1,2 @@
+realization,compartments,chamber_volume_uL,pulse_duration_ms,decay_dwell_s,cycle_duration_s,minimum_coupling_rate_per_s,maximum_coupling_rate_per_s,minimum_decay_rate_per_s,maximum_decay_rate_per_s,spectral_radius
+source-clamped catalytic microreactor chain,8,5.0,50.0,0.6,3.4000000000000004,1.5999999999999999,3.168,0.44577534024385645,11.958700805214086,0.78

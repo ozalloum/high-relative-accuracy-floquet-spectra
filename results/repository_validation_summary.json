@@ -1,0 +1,15 @@
+{
+  "checks": {
+    "structured_error_below_1e-13": true,
+    "dense_stress_test_has_two_negative_values": true,
+    "tntool_has_24_positive_modes": true,
+    "tntool_relative_error_below_2e-15": true,
+    "reference_right_sign_counts_complete": true,
+    "reference_left_sign_counts_complete": true,
+    "dense_right_failed_modes_23_24": true,
+    "dense_left_failed_modes_23_24": true,
+    "sensitivity_has_three_levels": true,
+    "runtime_scan_has_eight_dimensions": true
+  },
+  "all_checks_passed": true
+}

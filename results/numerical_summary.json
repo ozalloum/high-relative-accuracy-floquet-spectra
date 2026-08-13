@@ -1,0 +1,67 @@
+{
+  "reference_method": "independent multiprecision dense monodromy eigensolve",
+  "spectrum_benchmark": {
+    "n": 24,
+    "retention_span_decades": 40,
+    "spectral_radius": 0.8499999999999999,
+    "smallest_multiplier": 2.5271419228293328e-42,
+    "spectral_dynamic_range": 3.3634834368477355e+41,
+    "max_relative_error_structured": 5.284146376286223e-15,
+    "max_relative_error_dense": 466451.12922842114,
+    "negative_dense_eigenvalues": 2
+  },
+  "moderate_problem_validation": {
+    "max_relative_difference": 1.5575071867293031e-13,
+    "all_dense_eigenvalues_real_to_tolerance": true,
+    "structured_positive": true,
+    "spectral_radius": 0.8499999999999999,
+    "smallest_multiplier": 2.2863538398938337e-09
+  },
+  "dimensional_microreactor_protocol": {
+    "realization": "source-clamped catalytic microreactor chain",
+    "compartments": 8,
+    "chamber_volume_uL": 5.0,
+    "pulse_duration_ms": 50.0,
+    "decay_dwell_s": 0.6,
+    "cycle_duration_s": 3.4000000000000004,
+    "minimum_coupling_rate_per_s": 1.5999999999999999,
+    "maximum_coupling_rate_per_s": 3.168,
+    "minimum_decay_rate_per_s": 0.44577534024385645,
+    "maximum_decay_rate_per_s": 11.958700805214086,
+    "spectral_radius": 0.78
+  },
+  "koev_tntool_interoperability": {
+    "bd_input_csv": "data/koev_tntool_bd.csv",
+    "reference_csv": "data/koev_tntool_reference.csv",
+    "runner": "external/run_tntool_comparison.m",
+    "executed_in_this_python_environment": false
+  },
+  "maximum_dynamic_range_decades_tested": 45.52493935670299,
+  "first_sampled_nonreciprocity_ratio_with_rho_ge_1": 4.889266250067031,
+  "figure_files": [
+    "figure_1_protocol_and_matrix.pdf",
+    "figure_2_spectrum_accuracy.pdf",
+    "figure_3_error_vs_dynamic_range.pdf",
+    "figure_4_nonreciprocity_scan.pdf",
+    "figure_5_modal_decay.pdf",
+    "figure_6_dimensional_microreactor.pdf",
+    "figure_7_eigenvector_sign_variation.pdf"
+  ],
+  "csv_files": [
+    "algorithm_comparison.csv",
+    "baseline_factor_parameters.csv",
+    "figure_1a_pulse_schedule.csv",
+    "figure_1b_monodromy_matrix.csv",
+    "figure_2_spectrum_accuracy.csv",
+    "figure_3_error_vs_dynamic_range.csv",
+    "figure_4_nonreciprocity_scan.csv",
+    "figure_5_modal_decay.csv",
+    "figure_6a_dimensional_pulses.csv",
+    "figure_6b_dimensional_decay.csv",
+    "koev_tntool_bd.csv",
+    "koev_tntool_reference.csv",
+    "parameter_sensitivity.csv",
+    "physical_protocol_summary.csv",
+    "runtime_scaling.csv"
+  ]
+}

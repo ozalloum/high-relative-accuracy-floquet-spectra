@@ -1,0 +1,9 @@
+{
+  "source": "retained measured output from the official TNTool TNEigenValues routine",
+  "modes": 24,
+  "all_returned_multipliers_positive": true,
+  "maximum_absolute_error": 5.855653845758693e-17,
+  "maximum_relative_error": 1.3707835627610452e-15,
+  "elapsed_seconds_recorded": 0.29842686653137207,
+  "regeneration": "Install TNTool separately and run external/run_tntool_comparison.m"
+}

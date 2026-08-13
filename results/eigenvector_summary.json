@@ -1,0 +1,19 @@
+{
+  "reference_precision_decimal_digits": 120,
+  "maximum_reference_eigenvalue_relative_difference": 4.610584976489381e-34,
+  "maximum_right_backward_error_120dps": 5.900358599175886e-121,
+  "maximum_left_backward_error_120dps": 1.4302899864556562e-120,
+  "maximum_reference_simple_eigenvalue_condition_estimate": 1.362703217764996,
+  "all_reference_right_sign_counts_match_k_minus_1": true,
+  "all_reference_left_sign_counts_match_k_minus_1": true,
+  "numpy_dense_right_failed_modes": [
+    23,
+    24
+  ],
+  "scipy_dense_left_failed_modes": [
+    23,
+    24
+  ],
+  "minimum_numpy_dense_right_overlap_abs": 0.9364215797352315,
+  "minimum_scipy_dense_left_overlap_abs": 0.917701057980929
+}

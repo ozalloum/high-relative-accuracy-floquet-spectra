@@ -1,0 +1,4 @@
+method,input,executed_in_python_package,max_relative_error,negative_eigenvalues,leading_cubic_coefficient,comparison_basis
+Cauchon reduction + LAPACK DLASQ1,canonical bidiagonal factors,True,5.284146376286223e-15,0.0,3.3333333333333335,measured against 110-digit independent reference
+Koev TNEigenValues (TNTool),same exported BD(A) matrix,False,,,5.333333333333333,published HRA method; run external MATLAB/Octave bridge
+NumPy dense eig,formed dense monodromy matrix,True,466451.12922842114,2.0,,measured against 110-digit independent reference
